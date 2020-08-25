@@ -1,0 +1,215 @@
+
+
+library(DBI)
+library(odbc)
+library(dbplyr)
+#  library(janitor) , install.packages("janitor")
+# library(tidyr), install.packages("tidyr")
+
+
+con <- dbConnect(odbc::odbc(),
+                 Driver = "SQL Server",
+                 Server = "localhost\\SQLEXPRESS",
+                 Database = "COLLEGE",
+                 Trusted_Connection = "True")
+
+
+conn=con
+
+
+Departments <- dbGetQuery(conn, 'SELECT * FROM "COLLEGE"."dbo"."Departments"')
+Teachers <- dbGetQuery(conn, 'SELECT * FROM "COLLEGE"."dbo"."Teachers"')
+Students <- dbGetQuery(conn, 'SELECT * FROM "COLLEGE"."dbo"."Students"')
+Courses <- dbGetQuery(conn, 'SELECT * FROM "COLLEGE"."dbo"."Courses"')
+Classrooms <- dbGetQuery(conn, 'SELECT * FROM "COLLEGE"."dbo"."Classrooms"')
+
+Questions
+
+## Q1. Count the number of students on each department
+
+Classrm_Courses <- inner_join(Classrooms,Courses, by ="CourseId" )
+Classrm_Crs_Dep <- inner_join(Departments,Classrm_Courses, by=c("DepartmentId"="DepartmentID"))
+
+Classrm_Crs_Dep %>%
+  group_by(DepartmentName) %>%
+  summarise(n_distinct(StudentId))
+
+
+## Q2. How many students have each course of the English department and the total number of
+##     students in the department?
+English_dep <- subset(Classrm_Crs_Dep,DepartmentName=="English")
+
+English_dep <- English_dep[!duplicated(English_dep$StudentId), ]
+
+
+E <- English_dep %>%
+  group_by(CourseName) %>%
+  summarise(n_distinct(StudentId))
+
+colnames(E)[2] <- "StudentId"
+
+#  library(janitor) , install.packages("janitor")
+
+E<- E %>%
+  adorn_totals("row")
+
+
+
+## Q3. How many small (<22 students) and large (22+ students) classrooms are needed for the
+##     Science department?
+
+
+Science_dep <- subset(Classrm_Crs_Dep,DepartmentName=="Science")
+
+Science_num_std <-Science_dep %>%
+                  group_by(DepartmentName,CourseId,CourseName) %>%
+                  summarise(n_distinct(StudentId))
+
+Science_num_std$Classroom_size <- "Big classrooms"
+
+Science_num_std$Classroom_size[Science_num_std$`n_distinct(StudentId)`< 22] <- "Small classrooms"
+
+Science_num_std1 <-Science_num_std %>%
+                   group_by(Classroom_size) %>%
+                   summarise(n())
+
+colnames(Science_num_std1)[2] <- "Total_cls"
+
+## Q4. A feminist student claims that there are more male than female in the College. Justify if
+##     the argument is correct
+
+
+Std_gen <- Students %>%
+  group_by(Gender) %>%
+  summarise(n_distinct(StudentId))
+
+## Q5. For which courses the percentage of male/female students is over 70%?
+
+Classrm_Courses_L <- left_join(Classrooms,Courses, by ="CourseId" )
+Classrm_Crs_Std <- left_join(Classrm_Courses_L,Students, by ="StudentId" )
+
+Courses_Std_M <- subset(Classrm_Crs_Std,Gender=="M")
+Courses_Std_M_G <-Courses_Std_M %>%
+                  group_by(CourseId,CourseName) %>%
+                  summarise(StudentId=n())
+
+Courses_Std_F <- subset(Classrm_Crs_Std,Gender=="F")
+Courses_Std_F_G <-Courses_Std_F %>%
+  group_by(CourseId,CourseName) %>%
+  summarise(StudentId=n())
+
+Courses_Std_G <- inner_join(Courses_Std_M_G,Courses_Std_F_G, by ="CourseId" )
+
+Courses_Std_G$CourseName.y <- NULL
+colnames(Courses_Std_G)[2] <- "CourseName"
+colnames(Courses_Std_G)[3] <- "M_Stds"
+colnames(Courses_Std_G)[4] <- "F_Stds"
+
+Courses_Std_G$Pct_M <- Courses_Std_G$M_Stds/(Courses_Std_G$M_Stds+Courses_Std_G$F_Stds)*100
+Courses_Std_G$Pct_F <- Courses_Std_G$F_Stds/(Courses_Std_G$M_Stds+Courses_Std_G$F_Stds)*100
+
+Courses_Std_G %>% filter(Pct_M>70)
+Courses_Std_G %>% filter(Pct_F>70)
+
+  
+## Q6. For each department, how many students passed with a grades over 80?
+##     How many students (n and %) have a degree of 80+ by Department?
+
+Classrm_Crs_Dep1 <- inner_join(Departments,Classrm_Courses, by=c("DepartmentId"="DepartmentID"))
+
+
+Classrm_Crs_Dep_gt80 <- Classrm_Crs_Dep1 %>% select(DepartmentName,StudentId,degree)
+
+
+Classrm_Crs_Dep_gt80_2 <-Classrm_Crs_Dep_gt80 %>%
+  group_by(DepartmentName,StudentId) %>%
+  summarise(mean = mean(degree))
+
+Classrm_Crs_Dep_gt80_3 <- Classrm_Crs_Dep_gt80_2 %>% select(DepartmentName,StudentId,mean)
+
+Classrm_Crs_Dep_gt80_3$Over80 <- 0
+Classrm_Crs_Dep_gt80_3$Over80[Classrm_Crs_Dep_gt80_2$mean>80] <- 1
+Classrm_Crs_Dep_gt80_3$Over80[is.na(Classrm_Crs_Dep_gt80_2$mean)==TRUE] <- 0
+
+
+Classrm_Crs_Dep_gt80_4 <-Classrm_Crs_Dep_gt80_3 %>%
+  group_by(DepartmentName) %>%
+  summarise(n_distinct(StudentId),Over80=sum(Over80))
+
+colnames(Classrm_Crs_Dep_gt80_4)[2] <- "total_Std"
+
+Classrm_Crs_Dep_gt80_5 <- Classrm_Crs_Dep_gt80_4 %>%
+  mutate(Pct_80 =(Classrm_Crs_Dep_gt80_4$Over80/Classrm_Crs_Dep_gt80_4$total_Std)*100)
+
+
+## Q7. For each department, how many students passed with a grades under 60?
+Classrm_Crs_Dep_gtu60 <- Classrm_Crs_Dep %>% select(DepartmentName,StudentId,CourseId,degree)
+Classrm_Crs_Dep_gtu60$Under60 <- 0
+Classrm_Crs_Dep_gtu60$Under60[Classrm_Crs_Dep$degree<60] <- 1
+Classrm_Crs_Dep_gtu60$Under60[is.na(Classrm_Crs_Dep$degree)==TRUE] <"NO Age"
+
+Classrm_Crs_Dep_gtu60_2 <-Classrm_Crs_Dep_gtu60 %>%
+  group_by(DepartmentName) %>%
+  summarise(Under60=sum(Under60),n_distinct(StudentId))
+
+colnames(Classrm_Crs_Dep_gtu60_2)[3] <- "total_Std"
+
+Classrm_Crs_Dep_gtu60_2 <- Classrm_Crs_Dep_gtu60_2 %>%
+mutate(Pct_60 =(Classrm_Crs_Dep_gtu60_2$Under60/Classrm_Crs_Dep_gtu60_2$total_Std)*100)
+
+## Q8. Rate the teachers by their average student's grades (in descending order).
+
+Teachers_AVG_Grd <- inner_join(Classrm_Courses,Teachers, by ="TeacherId" )
+
+Teachers_AVG_R <-Teachers_AVG_Grd %>%
+  group_by(FirstName,LastName) %>%
+  summarise(Deg_mean=mean(degree))
+
+Teachers_AVG_R <-Teachers_AVG_R %>%
+arrange(desc(Deg_mean))
+
+
+## Q9. Create a dataframe showing the courses, departments they are associated with, the
+##     teacher in each course, and the number of students enrolled in the course
+##     (for each course, department and teacher show the names).
+
+Dep_Crs_nmStd <- left_join(Departments,Teachers_AVG_Grd, by=c("DepartmentId"="DepartmentID"))
+
+Teachers_AVG_StdC <-Dep_Crs_nmStd %>%
+  group_by(CourseId, CourseName , FirstName, LastName) %>%
+  summarise (StudentId = n())
+
+colnames(Teachers_AVG_StdC)[5] <- "total_Std"
+
+## Q10. Create a dataframe showing the students, the number of courses they take, the average
+##      of the grades per class, and their overall average (for each student show
+##      the student name).
+
+Stds_Dep_Grds <-left_join(Students,Dep_Crs_nmStd, by ="StudentId" )
+
+Stds_Dep_Grds1 <- Stds_Dep_Grds %>% select(StudentId,FirstName.x,LastName.x) 
+
+Stds_Dep_Grds2 <- Stds_Dep_Grds %>%
+  group_by(StudentId) %>%
+  summarise (CourseId = n(),Deg_mean=mean(degree))
+
+Stds_Dep_Grds3 <-left_join(Stds_Dep_Grds1,Stds_Dep_Grds2, by ="StudentId" )
+Stds_Dep_Grds4 <- Stds_Dep_Grds %>% select(StudentId,DepartmentName,degree) 
+
+Stds_Dep_Grds5 <- Stds_Dep_Grds4 %>%
+  group_by(StudentId,DepartmentName) %>%
+  summarise (Deg_mean=mean(degree))
+
+# library(tidyr), install.packages("tidyr")
+
+
+Stds_Dep_Grds6 <- Stds_Dep_Grds5 %>% 
+  pivot_wider(names_from = DepartmentName,values_from = Deg_mean)
+
+Stds_Dep_Grds6$'NA' <- NULL
+
+Stds_Dep_Grds7 <- inner_join(Stds_Dep_Grds3,Stds_Dep_Grds6, by ="StudentId" )
+colnames(Stds_Dep_Grds7)[2] <- "FirstName"
+colnames(Stds_Dep_Grds7)[3] <- "LastName"
+
+Stds_Dep_Grds7 <- Stds_Dep_Grds7[!duplicated(Stds_Dep_Grds7$StudentId), ]
